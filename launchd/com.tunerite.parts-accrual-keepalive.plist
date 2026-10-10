@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.tunerite.parts-accrual-keepalive</string>
+  <key>ProgramArguments</key><array>
+    <string>/Users/juliodebrigard/Parts Accrual Process/.venv/bin/python</string>
+    <string>/Users/juliodebrigard/Parts Accrual Process/keepalive.py</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/juliodebrigard/Parts Accrual Process</string>
+  <key>StartInterval</key><integer>21600</integer>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>/Users/juliodebrigard/Parts Accrual Process/logs/keepalive.log</string>
+  <key>StandardErrorPath</key><string>/Users/juliodebrigard/Parts Accrual Process/logs/keepalive.log</string>
+</dict></plist>

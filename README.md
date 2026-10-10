@@ -16,7 +16,8 @@ folder works out that amount for **Boca** and **Davie** and writes it into the A
 | Job | When | What it does |
 |---|---|---|
 | `com.tunerite.parts-accrual-snapshot` | every night 23:50, acts only on the last day of the month | Saves every open RO of both shops (`snapshots/YYYY-MM/`), checks the Tekmetric sign-in, posts to #parts-accrual (asks Julio to sign in if it expired) |
-| `com.tunerite.parts-accrual-monthly` | every morning 8:00, acts only on the 5th-10th | Runs `accrual.py` for each shop not done yet for last month, writes the new tab, posts the report and questions to #parts-accrual. Retries daily if something blocks it |
+| `com.tunerite.parts-accrual-monthly` | every hour 8:00-18:00, acts only on the 5th-10th | Runs `accrual.py` for each shop not done yet for last month, writes the new tab, posts the report and questions to #parts-accrual. Retries hourly if something blocks it (Slack alerts at most once a day) |
+| `com.tunerite.parts-accrual-keepalive` | every 6 hours | Opens Tekmetric in the background to keep the saved sign-in in use; logs the result to `logs/session.log`; tells Julio in Slack the first time it finds the sign-in expired |
 
 Job files: `launchd/`, installed in `~/Library/LaunchAgents/`. Logs: `logs/`. Reports: `runs/YYYY-MM-<shop>.json` (a report there means that shop is done for that month).
 
@@ -69,5 +70,5 @@ cd ~/'Parts Accrual Process'
 ## Known limits
 
 - **January:** last month's tab is in the previous year's file. Before February 5, set up the new year's AJE files and add their IDs to `config.py` (`sheets: {2027: ...}`). Until then the run stops and says so in Slack.
-- **Tekmetric sign-in** expires now and then. The month-end snapshot warns you a few days ahead, and the monthly run asks again if it's still expired.
+- **Tekmetric sign-in** can expire (Julio's own browser needs a new sign-in every morning, so maybe ~12 h idle). The keep-alive uses it every 6 hours; `logs/session.log` shows how long it really lasts. If it expires, the tool can't sign in alone (captcha): Julio runs the `signin` command once.
 - **Sublet dates are approximate**: Tekmetric keeps no order or bill date for sublets, so they're always listed for review.

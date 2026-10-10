@@ -1,8 +1,8 @@
-"""Scheduled monthly run (launchd com.tunerite.parts-accrual-monthly, every morning at 8:00).
+"""Scheduled monthly run (launchd com.tunerite.parts-accrual-monthly, every hour 8:00-18:00).
 
 Does nothing outside the 5th-10th of the month. On those days it runs accrual.py for every
 shop not done yet for last month, writes the new tab, and posts the report to #parts-accrual.
-If Tekmetric needs a fresh sign-in, it asks Julio in Slack and tries again the next morning.
+If Tekmetric needs a fresh sign-in, it asks Julio in Slack (once a day) and tries again every hour.
 """
 import sys
 import traceback
@@ -80,14 +80,14 @@ def main(force=False):
             if once_today("signin"):
                 slack(f"<@{SLACK_JULIO}> The Parts AJE run for {month} is waiting on Tekmetric: its sign-in expired. "
                       f"On the Mac mini, open Terminal and run:\n`{SIGNIN_CMD}`\nsign in in the Chrome window that opens. "
-                      f"I'll try again tomorrow at 8:00 (through the {LAST_DAY}th).")
+                      f"I'll try again every hour until 6 PM, and daily through the {LAST_DAY}th.")
             return
         except Exception as e:
             traceback.print_exc()
             if once_today(f"error-{shop}"):
                 slack(f"<@{SLACK_JULIO}> The Parts AJE run for {SHOPS[shop]['name']} ({month}) stopped: {type(e).__name__}: "
-                      f"{str(e)[:300]}\nNothing more was written for this shop. I'll retry tomorrow at 8:00.")
-    if today.day == LAST_DAY:
+                      f"{str(e)[:300]}\nNothing more was written for this shop. I'll retry every hour until 6 PM.")
+    if today.day == LAST_DAY and today.hour >= 18 and once_today("final"):
         left = [SHOPS[s]["name"] for s in SHOPS if not (RUNS_DIR / f"{month}-{s}.json").exists()]
         if left:
             slack(f"<@{SLACK_JULIO}> Last automatic try for the {month} Parts AJE: still not done for {', '.join(left)}. "
