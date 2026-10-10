@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+scrape_debug/
+logs/
+# business data (customer names, amounts) stays out of git
+runs/
+snapshots/
