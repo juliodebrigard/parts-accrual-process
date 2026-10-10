@@ -12,6 +12,9 @@ SYNC_DB = SYNC_DIR / "data/tekmetric.sqlite"
 GOOGLE_KEY = Path.home() / ".config/tunerite-recon/google-sa.json"   # recon-drive robot (Julio OK'd reuse 2026-10-10)
 SLACK_WEBHOOK_FILE = Path.home() / ".config/tunerite-accrual/slack-webhook"
 
+MONDAY_TOKEN_FILE = Path.home() / ".config/tunerite-accrual/monday-token"
+MONDAY_FRANYESKA = 78001477   # Franyeska's monday.com user id
+
 SLACK_JULIO = "U04E7920CC8"
 SLACK_FRANYESKA = "U0949L7QN1M"
 
@@ -20,11 +23,13 @@ SHOPS = {
     "boca": {
         "name": "Boca",
         "shop_id": 2545,
+        "monday_board": 9563055882,   # Accounting Monthly Tasks Tune Rite North Inc
         "sheets": {2026: "1QvFOJDqqabl67uH_0rg917P-DVkbfnnjf8P1EMaOZnA"},
     },
     "davie": {
         "name": "Davie",
         "shop_id": 3937,
+        "monday_board": 9570355047,   # Accounting Monthly Tasks Davie
         "sheets": {2026: "1QsBdymFQLXT_TN8Dqy3rd4-VplJA8feWPfDPayJj7gU"},
     },
 }

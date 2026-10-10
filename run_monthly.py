@@ -9,6 +9,7 @@ import traceback
 from datetime import datetime
 
 import accrual
+import monday
 import tekmetric_db
 from config import RUNS_DIR, SHOPS, SLACK_FRANYESKA, SLACK_JULIO, TZ
 from notify import slack
@@ -46,6 +47,12 @@ def report_text(r):
         lines.append("Reply in this thread. Julio applies the answers with Claude in the Parts Accrual Process folder.")
     else:
         lines.append("No questions this month.")
+    if r.get("monday"):
+        lines.append(f"Posted \"Chart is ready for JE\" for Franyeska on <{r['monday']}|monday.com>.")
+    elif r.get("monday_error"):
+        lines.append(f"<@{SLACK_JULIO}> Couldn't post the monday.com update ({r['monday_error'][:200]}); please post it by hand.")
+    else:
+        lines.append("The monday.com \"Chart is ready for JE\" update will be posted once the questions are answered and applied.")
     lines.append("Next: book the month-end JE (last day of the month) and the reversing JE (1st of the next month) in QBO for this total.")
     return "\n".join(lines)
 
@@ -74,6 +81,12 @@ def main(force=False):
         try:
             sheet, layout, result = accrual.plan(shop, y, m)
             accrual.apply(sheet, layout, result)
+            if not result["questions"]:
+                # final chart: tell Franyeska on monday, like Julio does by hand
+                try:
+                    result["monday"] = monday.post_ready(shop)
+                except Exception as e:
+                    result["monday_error"] = f"{type(e).__name__}: {e}"
             accrual.save(result)
             slack(report_text(result))
         except NotSignedIn:

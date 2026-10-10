@@ -10,6 +10,7 @@ folder works out that amount for **Boca** and **Davie** and writes it into the A
 - QBO entry steps: Drive doc "Parts accrual JE"
 - Dating rule for Franyesca: Claude Doc [Parts Purchases: How to Date Them in QBO](https://claude.ai/code/artifact/72ae0f32-daf5-47c6-9df8-89c676f8d1fb)
 - Notifications: Slack **#parts-accrual** (private: Julio + Franyeska)
+- Hand-off to Franyesca: the update "Chart is ready for JE @Franyeska Reyes" on the **Enter parts adjustments JEs** item in the current month's group of each shop's monday.com accounting board (Tune Rite North board 9563055882, Davie board 9570355047)
 
 ## What runs on its own (Mac mini, launchd)
 
@@ -33,6 +34,8 @@ The closing month is the month that just ended (run on Oct 5 → closing month =
 
 Balance formulas are rewritten for the whole table each time.
 
+6. **monday.com hand-off.** If a shop has no open questions, the run posts "Chart is ready for JE" (tagging Franyeska) on monday right away. If there are questions, it waits: once the answers are applied, post it with `.venv/bin/python monday.py --shop <boca|davie>`.
+
 ## Rules (agreed with Julio, 2026-10-10)
 
 - **The date that counts is the date QBO booked the cost.**
@@ -53,6 +56,7 @@ Balance formulas are rewritten for the whole table each time.
   - Tekmetric's login has a captcha, so a person signs in by hand: run `.venv/bin/python tekmetric_web.py signin` on the Mac mini and sign in in the Chrome window that opens. The session is kept in `~/.config/tunerite-accrual/chrome-profile/`. No password is stored.
 - **Sheets:** written as the `recon-drive@tunerite-hq.iam.gserviceaccount.com` robot. It's an Editor on both AJE files and reuses the Parts Recon key `~/.config/tunerite-recon/google-sa.json` (Julio OK'd, 2026-10-10).
 - **Slack:** incoming webhook for #parts-accrual in `~/.config/tunerite-accrual/slack-webhook`.
+- **monday.com:** Julio's personal API token (account tuneriteauto) in `~/.config/tunerite-accrual/monday-token`.
 
 ## Running it by hand
 
@@ -63,6 +67,7 @@ cd ~/'Parts Accrual Process'
 .venv/bin/python run_monthly.py --force                              # what the 8:00 job does, any day
 .venv/bin/python snapshot.py --force --no-slack                      # test snapshot (saved as YYYY-MM-test)
 .venv/bin/python tekmetric_web.py signin                             # renew the Tekmetric sign-in
+.venv/bin/python monday.py --shop boca                               # post "Chart is ready for JE" on monday
 ```
 
 `accrual.py` refuses to touch a month whose tab already exists, so it never overwrites work done by hand.

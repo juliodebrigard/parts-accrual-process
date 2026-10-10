@@ -8,7 +8,7 @@ Read `README.md` first. It has the process, the rules, and where every file and 
 - Speak in accounting and shop terms, not code.
 
 ## Applying answers from #parts-accrual
-When Julio pastes answers to the monthly questions, edit that month's tab with the Google Sheets connector. When adding a confirmed one-off part to an RO, append it to the amount formula (`=296.98+370`). After deleting or inserting rows, rewrite the Balance formulas (`=E<prev>+D<row>`). Never send an `updateCells` with empty `{}` cells: that clears them.
+When Julio pastes answers to the monthly questions, edit that month's tab with the Google Sheets connector. When adding a confirmed one-off part to an RO, append it to the amount formula (`=296.98+370`). After deleting or inserting rows, rewrite the Balance formulas (`=E<prev>+D<row>`). Never send an `updateCells` with empty `{}` cells: that clears them. When that shop's chart is final, post the monday hand-off: `.venv/bin/python monday.py --shop <shop>` (once per shop per month; check the item's updates first so it isn't posted twice).
 
 ## Hard rules
 - Never write questions to a tab before someone answers them.
