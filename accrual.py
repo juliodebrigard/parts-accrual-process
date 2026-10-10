@@ -6,9 +6,11 @@
 Steps (see README.md for the rules behind each one):
   1. Duplicate last month's tab, rename it and its title to the closing month.
   2. Drop ROs posted in the closing month (or earlier) and rows noted "remove when starting".
-  3. For ROs that stay, add parts bought in the closing month.
-  4. Add ROs posted between the 1st of the new month and today that had parts bought in the closing month.
-  5. Add open ROs (WIP screen) that had parts bought in the closing month.
+  3. For ROs that stay, add parts bought and sublets added in the closing month (returns are ignored).
+  4. Add ROs posted between the 1st of the new month and today that had such costs in the closing month.
+  5. Add ROs still open (WIP, Estimate, Complete, Saved for Later) that had such costs in the closing month.
+Parts and returns come from Tekmetric's Parts Purchased report (one pull per shop per month);
+RO statuses, posted dates and sublets from the local API sync.
 Anything that needs a person (one-off vendors, ROs that vanished, ROs with no parts left) is
 NOT written to the tab; it goes to the report's questions instead.
 """
@@ -17,7 +19,7 @@ import json
 from datetime import datetime
 
 import tekmetric_db
-from config import MIN_RO_AMOUNT, RUNS_DIR, SHOPS, SNAPSHOT_DIR, TZ, WIP_STATUSES
+from config import MIN_RO_AMOUNT, RUNS_DIR, SHOPS, SNAPSHOT_DIR, TZ
 from sheets import Sheet
 from tekmetric_web import TekmetricWeb
 from vendors import vendor_type
@@ -117,37 +119,71 @@ def sublet_dater(shop, start, prev_start):
     return "approval date", lambda s, end: bool(s["authorizedDate"]) and start <= tekmetric_db.local(s["authorizedDate"]) < end
 
 
-def month_parts(tw, shop, ro, start, end, dater=None):
-    """Parts bought (and sublets added) in [start, end) on one RO, split into what the tool
-    adds on its own (account vendors, in-house, sublets) and what needs a person
-    (one-off vendors, no vendor)."""
-    parts, sublets = tw.ro_items(shop, ro["id"])
-    auto, ask, live = [], [], 0
-    for s in sublets:
-        if not s["authorized"] or str(s["status"]).lower() == "declined" or not s["cost"]:
+PURCHASE_TYPES = {"RO_ORDER", "INV_ORDER"}   # bought for an RO / pulled from stock to an RO
+# Returns are ignored on purpose: marking a part "returned" in Tekmetric is a human action and
+# doesn't mean the credit came back. Credits wash out in QBO when the money is received (Julio, 2026-10-10).
+
+
+def month_activity(report, shop, by_number):
+    """Group the Parts Purchased report's purchases by RO number (falling back on the PO #,
+    which the shops set to the RO number). Returns are skipped; see PURCHASE_TYPES."""
+    out, skipped = {}, []
+    for x in report:
+        if x["orderType"] not in PURCHASE_TYPES:
             continue
-        if any(w in f"{s['vendor']} {s['name']}".lower() for w in RIDE_SUBLETS):
+        n = x.get("repairOrderNumber")
+        if n is None and str(x.get("orderNumber") or "").strip().isdigit():
+            n = int(str(x["orderNumber"]).strip())
+        if n not in by_number:
+            skipped.append(x)          # stock orders, unknown types, RO not found
+            continue
+        when = tekmetric_db.local(x["processedDate"])
+        out.setdefault(n, []).append({
+            "part": x.get("name") or x.get("title") or "(no name)", "vendor": (x.get("vendorName") or "").strip(),
+            "invoice": x.get("operationNumber"), "ordered": when.strftime("%m/%d/%y"),
+            "status": "PURCHASED",
+            "amount": round((x.get("totalCost") or 0) / 100, 2),   # cost without core charges (Julio, 2026-10-10)
+            "type": vendor_type(shop, x.get("vendorName"))})
+    return out, skipped
+
+
+def ro_sublets(ro, dater, end):
+    """Sublets added in the closing month, from the API sync (Tekmetric keeps no bill date)."""
+    out = []
+    for s in ro["payload"].get("sublets") or []:
+        items = s.get("items") or []
+        cost = (sum(i.get("cost") or 0 for i in items) if items else (s.get("cost") or 0)) / 100
+        vendor = s.get("vendor")
+        vendor = (vendor.get("name") if isinstance(vendor, dict) else vendor) or ""
+        if not s.get("authorized") or not cost:
+            continue
+        if any(w in f"{vendor} {s.get('name')}".lower() for w in RIDE_SUBLETS):
             continue   # customer rides aren't parts cost (Julio, 2026-10-10)
-        live += s["cost"]
-        if dater and dater[1](s, end):
-            approved = tekmetric_db.local(s["authorizedDate"]).strftime("%m/%d/%y") if s["authorizedDate"] else "-"
-            auto.append({"part": s["name"] or "(sublet)", "vendor": (s["vendor"] or "").strip(), "invoice": None,
-                         "ordered": approved, "status": "SUBLET", "amount": round(s["cost"], 2),
-                         "type": "sublet", "dated_by": dater[0]})
-    for p in parts:
-        if p["status"] == "QUOTED" or not p["orderDate"]:
-            continue
-        qty = (p["ordered"] or 0) - (p["returned"] or 0)
-        amount = round(p["cost"] * qty, 2)
-        live += amount
-        od = tekmetric_db.local(p["orderDate"])
-        if not (start <= od < end) or amount == 0:
-            continue
-        item = {"part": p["name"] or "(no name)", "vendor": (p["vendor"] or "").strip(),
-                "invoice": p["invoice"], "ordered": od.strftime("%m/%d/%y"), "status": p["status"],
-                "amount": amount, "type": vendor_type(shop, p["vendor"])}
-        (auto if item["type"] in ("account", "in-house") else ask).append(item)
-    return auto, ask, round(live, 2)
+        if dater[1]({"id": s.get("id"), "authorizedDate": s.get("authorizedDate")}, end):
+            approved = tekmetric_db.local(s["authorizedDate"]).strftime("%m/%d/%y") if s.get("authorizedDate") else "-"
+            out.append({"part": s.get("name") or "(sublet)", "vendor": vendor.strip(), "invoice": None,
+                        "ordered": approved, "status": "SUBLET", "amount": round(cost, 2),
+                        "type": "sublet", "dated_by": dater[0]})
+    return out
+
+
+def ro_live_cost(ro):
+    """Parts + sublet cost currently on the RO (API sync), to spot ROs that have nothing left."""
+    total = 0
+    for j in ro["payload"].get("jobs") or []:
+        for p in j.get("parts") or []:
+            total += (p.get("cost") or 0) * (p.get("quantity") or 0)
+    for s in ro["payload"].get("sublets") or []:
+        total += sum(i.get("cost") or 0 for i in s.get("items") or []) or (s.get("cost") or 0)
+    return round(total / 100, 2)
+
+
+def split(items):
+    """What the tool adds on its own (account vendors, in-house, sublets) vs what a person
+    confirms (one-off vendors, no vendor)."""
+    auto = [i for i in items if i["type"] in ("account", "in-house", "sublet")]
+    ask = [i for i in items if i["type"] not in ("account", "in-house", "sublet")]
+    return auto, ask
 
 
 def plan(shop_key, year, month, log=print, allow_existing=False):
@@ -172,69 +208,74 @@ def plan(shop_key, year, month, log=print, allow_existing=False):
     result = {"shop": shop_key, "month": start.strftime("%Y-%m"), "new_tab": new_tab, "prev_tab": prev_tab,
               "rows": [], "removed": [], "updated": [], "added": [], "questions": [], "run_at": now.isoformat()}
     q = result["questions"]
-    next_name = MONTHS[end.month - 1]
-
+    month_name, next_name = MONTHS[month - 1], MONTHS[end.month - 1]
     dater = sublet_dater(shop_key, start, prev_start)
     result["sublets_dated_by"] = dater[0]
+
     with TekmetricWeb() as tw:
         tw.check_signed_in()
-        on_list = set()
-        # steps 2 + 3: last month's ROs
-        for row in layout["rows"]:
-            on_list.add(row["ro"])
-            ro = by_number.get(row["ro"])
-            if "remove when starting" in str(row["note"]).lower():
-                result["removed"].append({"ro": row["ro"], "desc": row["desc"], "why": row["note"]})
-                continue
-            if not ro:
-                q.append({"ro": row["ro"], "desc": row["desc"], "ask": "RO not found in Tekmetric. Kept as is; remove it?"})
-                result["rows"].append(dict(row, note=""))
-                continue
-            if ro["posted"] and ro["posted"] < end:
-                result["removed"].append({"ro": row["ro"], "desc": row["desc"],
-                                          "why": f"posted {ro['posted'].strftime('%m/%d/%y')}"})
-                continue
-            auto, ask, live = month_parts(tw, shop_key, ro, start, end, dater)
-            already = amount_terms(row["amount"])
-            auto = [a for a in auto if round(a["amount"], 2) not in already]   # typed in by hand already
-            log(f"  kept {row['ro']}: +{sum(a['amount'] for a in auto):.2f}, {len(ask)} to ask")
-            amount = row["amount"]
-            add = round(sum(a["amount"] for a in auto), 2)
-            if add:
-                amount = (amount if isinstance(amount, str) and amount.startswith("=") else f"={amount}") + f"+{money(add)}"
-                result["updated"].append({"ro": row["ro"], "desc": row["desc"], "added": add, "parts": auto})
-            for a in ask:
-                if round(a["amount"], 2) in already:   # typed into the amount by hand already
-                    continue
-                q.append({"ro": row["ro"], "desc": row["desc"], "ask": "One-off purchase: was it paid in "
-                          f"{MONTHS[month - 1]}? If yes, add it to this RO.", **a})
-            if live == 0:
-                q.append({"ro": row["ro"], "desc": row["desc"],
-                          "ask": f"No parts on this RO in Tekmetric anymore (status {ro['status']}). Remove it?"})
-            result["rows"].append(dict(row, amount=amount, note=""))
+        report = tw.parts_purchased(shop_key, start, end)
+    activity, skipped = month_activity(report, shop_key, by_number)
+    result["report_lines"], result["report_skipped"] = len(report), len(skipped)
+    log(f"  Parts Purchased {month_name}: {len(report)} lines, {len(activity)} ROs, {len(skipped)} not tied to an RO")
 
-        # steps 4 + 5: ROs posted since the 1st, then open ROs
-        candidates = []
-        for ro in by_number.values():
-            if ro["number"] in on_list or not ro["created"] or ro["created"] >= end:
-                continue
-            if ro["posted"] and end <= ro["posted"] <= now:
-                candidates.append((ro, f"Posted {ro['posted'].strftime('%m/%d/%y')}: remove when starting {next_name}"))
-            elif not ro["posted"] and ro["status"] in WIP_STATUSES:
-                candidates.append((ro, ""))
-        log(f"  checking {len(candidates)} posted/open ROs")
-        for ro, note in sorted(candidates, key=lambda x: x[0]["number"]):
-            auto, ask, _ = month_parts(tw, shop_key, ro, start, end, dater)
-            add = round(sum(a["amount"] for a in auto), 2)
-            if add + sum(a["amount"] for a in ask) < MIN_RO_AMOUNT:
-                continue   # under $10 in total: not worth accruing or asking about
-            for a in ask:
-                q.append({"ro": ro["number"], "desc": ro["customer"], "ask": "One-off purchase: was it paid in "
-                          f"{MONTHS[month - 1]}? If yes, add this RO to the tab.", **a})
-            if add >= MIN_RO_AMOUNT:
-                result["rows"].append({"ro": ro["number"], "desc": ro["customer"], "amount": add, "note": note})
-                result["added"].append({"ro": ro["number"], "desc": ro["customer"], "added": add,
-                                        "posted": bool(note), "parts": auto})
+    def open_at_month_end(ro):
+        return ro["status"] != "Deleted" and not (ro["posted"] and ro["posted"] < end)
+
+    def ask_items(ro_number, desc, ask, where):
+        for a in ask:
+            text = f"One-off purchase: was it paid in {month_name}? If yes, {where}."
+            q.append({"ro": ro_number, "desc": desc, "ask": text, **a})
+
+    # steps 2 + 3: last month's ROs
+    on_list = set()
+    for row in layout["rows"]:
+        on_list.add(row["ro"])
+        ro = by_number.get(row["ro"])
+        if "remove when starting" in str(row["note"]).lower():
+            result["removed"].append({"ro": row["ro"], "desc": row["desc"], "why": row["note"]})
+            continue
+        if not ro:
+            q.append({"ro": row["ro"], "desc": row["desc"], "ask": "RO not found in Tekmetric. Kept as is; remove it?"})
+            result["rows"].append(dict(row, note=""))
+            continue
+        if not open_at_month_end(ro):
+            result["removed"].append({"ro": row["ro"], "desc": row["desc"],
+                                      "why": f"posted {ro['posted'].strftime('%m/%d/%y')}"})
+            continue
+        auto, ask = split(activity.get(row["ro"], []) + ro_sublets(ro, dater, end))
+        already = amount_terms(row["amount"])   # typed into the amount by hand already
+        auto = [a for a in auto if not (a["amount"] > 0 and round(a["amount"], 2) in already)]
+        ask = [a for a in ask if not (a["amount"] > 0 and round(a["amount"], 2) in already)]
+        add = round(sum(a["amount"] for a in auto), 2)
+        amount = row["amount"]
+        if add:
+            base = amount if isinstance(amount, str) and amount.startswith("=") else f"={amount}"
+            amount = base + (f"+{money(add)}" if add > 0 else f"-{money(-add)}")
+            result["updated"].append({"ro": row["ro"], "desc": row["desc"], "added": add, "parts": auto})
+        ask_items(row["ro"], row["desc"], ask, "add it to this RO")
+        if ro_live_cost(ro) == 0:
+            q.append({"ro": row["ro"], "desc": row["desc"],
+                      "ask": f"No parts on this RO in Tekmetric anymore (status {ro['status']}). Remove it?"})
+        result["rows"].append(dict(row, amount=amount, note=""))
+
+    # steps 4 + 5: other ROs open at month end with purchases or sublets in the closing month
+    candidates = set(activity)
+    candidates |= {n for n, ro in by_number.items() if ro["created"] and ro["created"] < end and ro_sublets(ro, dater, end)}
+    for n in sorted(candidates - on_list):
+        ro = by_number[n]
+        if not open_at_month_end(ro) or (ro["posted"] and ro["posted"] > now):
+            continue
+        auto, ask = split(activity.get(n, []) + ro_sublets(ro, dater, end))
+        add = round(sum(a["amount"] for a in auto), 2)
+        if add + sum(a["amount"] for a in ask) < MIN_RO_AMOUNT:
+            continue   # under $10 in total: not worth accruing or asking about
+        note = f"Posted {ro['posted'].strftime('%m/%d/%y')}: remove when starting {next_name}" if ro["posted"] else ""
+        ask_items(n, ro["customer"], ask, "add this RO to the tab")
+        if add >= MIN_RO_AMOUNT:
+            result["rows"].append({"ro": n, "desc": ro["customer"], "amount": add, "note": note})
+            result["added"].append({"ro": n, "desc": ro["customer"], "added": add, "posted": bool(note),
+                                    "status": ro["status"], "parts": auto})
     # posted ROs go at the bottom, with their note
     result["rows"].sort(key=lambda r: bool(r["note"]))
     return sheet, layout, result

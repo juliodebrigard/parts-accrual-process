@@ -30,7 +30,7 @@ The closing month is the month that just ended (run on Oct 5 → closing month =
 2. **Drop posted ROs.** Remove every RO posted in the closing month or earlier, and every row whose note says "remove when starting …". An RO posted on or after the 1st of the new month stays (the process runs late, on the 5th).
 3. **Update the ROs that stay.** Add the cost of parts bought on them during the closing month (appended to the amount formula, e.g. `=3309+40`). Parts from earlier months are already in the amount.
 4. **ROs posted since the 1st.** For ROs posted between the 1st of the new month and today, add those with parts bought in the closing month. They get a note in the column after Balance, "Posted mm/dd/yy: remove when starting <next month>", so next month's step 2 drops them.
-5. **WIP screen.** For open ROs (Estimate, Work-In-Progress, Complete; not "Saved for Later"), add those with parts bought in the closing month. No duplicates: ROs already on the tab are handled in step 3.
+5. **Open ROs.** For ROs still open (Estimate, Work-In-Progress, Complete and **Saved for Later**), add those with parts bought in the closing month. No duplicates: ROs already on the tab are handled in step 3.
 
 Balance formulas are rewritten for the whole table each time.
 
@@ -43,6 +43,7 @@ Balance formulas are rewritten for the whole table each time.
   - **Every other vendor is one-off**, booked by payment date. The tool never adds these on its own; they go to the questions, and Franyesca or Julio confirms whether each was paid in the closing month.
 - **Sublets** count like account-vendor purchases (added automatically) but are listed in the Slack report for Franyesca to check, because Tekmetric has no bill date for them. Dated by the month-end snapshots (on this month's, not on last month's); until two snapshots exist, by approval date. **Lyft/Uber rides are left out.**
 - **"In house" parts** (shop stock) count, dated by their order date.
+- **Returns are ignored.** Marking a part "returned" in Tekmetric is a human action and doesn't mean the credit came back; credits wash out in QBO when the money is actually received.
 - **Quotes don't count.** A part whose status is QUOTED (a PartsTech quote, often on a declined job) was never bought.
 - **Don't rely on the job "approved" time.** Parts are sometimes ordered before the job is approved in Tekmetric. Only the part's order date and status matter.
 - **Under $10:** an RO whose new parts total less than $10 is left off, and not asked about either.
@@ -52,7 +53,8 @@ Balance formulas are rewritten for the whole table each time.
 ## Where the data comes from
 
 - **RO list, statuses, posted dates:** the local Tekmetric API sync, `~/tekmetric-api-integration/data/tekmetric.sqlite` (refreshed at the start of each run).
-- **Part order date, vendor, invoice #, status, received and returned quantities:** the Tekmetric web app. The API doesn't have these. `tekmetric_web.py` opens each RO page in a hidden Chrome window and reads the data the page loads (`/api/repair-order/<id>/estimate`). It only reads and never clicks anything.
+- **Parts bought in the month:** Tekmetric's **Parts Purchased** report (Reports → Parts → Parts Purchased), one pull per shop per month: RO #, PO #, vendor, invoice #, date purchased, cost. The API doesn't have this. `tekmetric_web.py` opens the report in a hidden Chrome window and reads the data the page loads. It only reads and never clicks anything. (`ro_items()` can still read a single RO page for spot checks.)
+- **Sublets:** from the API sync (vendor, cost, approval date), dated by the month-end snapshots.
   - Tekmetric's login has a captcha, so a person signs in by hand: run `.venv/bin/python tekmetric_web.py signin` on the Mac mini and sign in in the Chrome window that opens. The session is kept in `~/.config/tunerite-accrual/chrome-profile/`. No password is stored.
 - **Sheets:** written as the `recon-drive@tunerite-hq.iam.gserviceaccount.com` robot. It's an Editor on both AJE files and reuses the Parts Recon key `~/.config/tunerite-recon/google-sa.json` (Julio OK'd, 2026-10-10).
 - **Slack:** incoming webhook for #parts-accrual in `~/.config/tunerite-accrual/slack-webhook`.

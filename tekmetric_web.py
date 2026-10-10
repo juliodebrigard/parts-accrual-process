@@ -8,6 +8,7 @@ runs reuse it headlessly. No password is stored. This module only opens pages
 and reads them; it never clicks anything that changes Tekmetric.
 """
 import os
+from datetime import timedelta
 import sys
 from pathlib import Path
 
@@ -74,6 +75,41 @@ class TekmetricWeb:
             # some RO pages keep polling and never go network-idle, so don't wait for that
             self.open_ro(shop, ro_id, wait_until="domcontentloaded")
         return resp.value.json()
+
+    def parts_purchased(self, shop, start, end):
+        """Tekmetric's Parts Purchased report (Reports > Parts > Parts Purchased) for
+        [start, end): every purchase and return with RO #, PO #, vendor, invoice #, date, cost.
+        Read the same way the report page reads it, with the page's own sign-in token."""
+        token = {}
+
+        def grab(req):
+            if "/reports/parts-purchased/" in req.url and "x-auth-token" in req.headers:
+                token["h"] = req.headers["x-auth-token"]
+        self.page.on("request", grab)
+        self.page.goto(f"{BASE}/admin/shop/{SHOPS[shop]}/reports/parts/purchased",
+                       wait_until="domcontentloaded", timeout=60000)
+        for _ in range(30):
+            if token:
+                break
+            self.page.wait_for_timeout(1000)
+        self.page.remove_listener("request", grab)
+        if not token:
+            raise NotSignedIn("Couldn't open the Parts Purchased report (sign-in expired?)")
+        last = end - timedelta(milliseconds=1)
+        rows, page_no = [], 0
+        while True:
+            r = self.page.request.get(
+                f"{BASE}/api/shop/{SHOPS[shop]}/reports/parts-purchased/results",
+                params={"start": start.isoformat(timespec="milliseconds"), "end": last.isoformat(timespec="milliseconds"),
+                        "shopId": str(SHOPS[shop]), "timeZone": "America/New_York", "size": "1000", "page": str(page_no)},
+                headers={"x-auth-token": token["h"], "accept": "application/json"})
+            if r.status != 200:
+                raise RuntimeError(f"Parts Purchased report: HTTP {r.status}")
+            data = r.json()
+            rows += data["content"]
+            if data.get("last", True):
+                return rows
+            page_no += 1
 
     def ro_parts(self, shop, ro_id):
         return self.ro_items(shop, ro_id)[0]
